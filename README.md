@@ -1,2 +1,2 @@
 # Kaggle_study
-kaggle for data study
+kaggle for data science
