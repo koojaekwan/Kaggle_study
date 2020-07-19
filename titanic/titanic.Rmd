@@ -1,0 +1,558 @@
+---
+title: "Titanic"
+author: "Jae Kwan Koo"
+output:
+  github_document:
+    toc: yes
+    toc_depth: 4
+  word_document: default
+  html_document:
+    fig_height: 6
+    fig_width: 10
+    highlight: textmate
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=T, fig.align = "center", message=F, warning=F, fig.height = 5, cache=F, dpi = 300, dev = "png")
+```  
+
+## 1.1 Load the Library and Check data  
+
+```{r Library, message=FALSE, warning=FALSE}
+# data manipulate
+library(tidyverse)
+library(data.table)
+library(stringr)
+library(mice)
+
+# modeling
+library(caret)
+library(randomForest)
+library(Metrics)
+
+# visualization
+library(scales)    # dollar format
+library(ggthemes)
+library(patchwork) # grid arrange
+```  
+
+<br>
+
+```{r}
+train_df <- fread("train.csv", data.table = F)
+test_df <- fread("test.csv", data.table = F)
+
+full_df <- bind_rows(train_df, test_df)
+```  
+
+
+### 1.2 Glimpse  
+
+```{r}
+dplyr::glimpse(full_df)
+```  
+
+str함수의 상위호환인 dplyr::glimpse함수로 컬럼들의 특성을 알 수 있다.  
+
+```{r}
+full_df %>% head
+```  
+### 1.3 Check the NA, NULL etc..  
+
+```{r}
+purrr::map_dbl(full_df, ~sum(is.na(.x))) # ~ : function, x is denoted by .x
+# apply(train_df, 2, function(x) sum(is.na(x)))
+
+purrr::map_dbl(full_df, ~sum(.x=="", na.rm = T))
+# apply(train_df, 2, function(x) sum(x=="", na.rm = T))
+```  
+
+apply()로 확인해도 상관없다.  
+위의 결과는 결측값의 갯수와 공백으로 된 값들의 갯수를 각각 보여주고 있다.  
+
+### 1.4 Summary  
+
+```{r}
+summary(full_df)
+```  
+
+## 2.1 Feature Engineering  
+
+```{r}
+full_df$title <- gsub("(.*, )|(\\..*)", "", full_df$Name)  # ([A-Za-z]+)\.
+
+full_df$Name %>% head
+full_df$title %>% head
+```  
+
+이름에는 호칭이 붙기 마련이다. 이 이름들에 대해서 호칭만 가져와 어느 직업군, 성별 등 포괄적으로 알 수 있는 정보를 획득할 수 있다.  
+
+<br>
+
+[regular expression practice](https://regexr.com/)  
+
+```{r}
+full_df$title %>% unique
+
+table(full_df$Sex, full_df$title)
+```  
+
+분할표를 통해 카테고리화를 시킨 이름의 타이틀들을 확인한다.  
+흔하지 않은 title은 따로 지정해주는 작업이 필요하다.  
+
+```{r}
+full_df$title[full_df$title == "Mlle"] <- "Miss"
+full_df$title[full_df$title == "Ms"] <- "Miss"
+full_df$title[full_df$title == "Mme"] <- "Mrs"
+
+`%notin%` <- Negate(`%in%`)
+
+full_df$title[full_df$title %notin% c("Master", "Miss", "Mrs")] <- "Rare_title"
+
+table(full_df$Sex, full_df$title)
+```  
+
+확실히 알 수 있는 것들은 분류하고, 나머지 매우 적은 title에 대해서는 Rare_title에 담아둔다.  
+
+
+```{r}
+sapply(full_df$Name,  function(x) strsplit(x, split = '[,.]')) %>% head
+# map(full_df$Name, ~strsplit(.x, split = '[,.]')) %>% head
+
+full_df$surname <- sapply(full_df$Name,  function(x) strsplit(x, split = '[,.]')[[1]][1])
+```  
+
+,와 .를 기준으로 문자를 나누고, 이름만 가져왔다.  
+
+### 2.2 family size  
+
+
+
+
+```{r}
+# Create a family size variable including the passenger themselves
+full_df$fsize <- full_df$SibSp + full_df$Parch + 1
+full_df$fsize %>% head
+
+# Create a family variable 
+full_df$family <- paste(full_df$surname, full_df$fsize, sep='_')
+full_df$family %>% head
+```  
+
+
+함께 탑승한 형제자매, 아내, 남편의 수와 부모 or 자식의 수를 합하고 +1(자신)을 통해 family size의 형태로 만든다.  
+
+마찬가지로 아까 위에서 구한 가족의 이름(외국에서는 가족이름이 존재)와 그에 대한 가족명수를 합친 famliy의 컬럼을 만든다.  
+
+
+```{r}
+# Use ggplot2 to visualize the relationship between family size & survival
+
+ggplot(full_df, aes(x = fsize, fill = factor(Survived))) +
+  geom_bar(stat='count', position='dodge') +
+  scale_x_continuous(breaks=c(1:11)) +
+  labs(x = 'Family Size') +
+  theme_few()
+```  
+
+가족 크기별 생존 현황이다.  
+
+```{r}
+# Discretize family size
+full_df$Fsize_dis[full_df$fsize == 1] <- 'singleton'
+full_df$Fsize_dis[full_df$fsize < 5 & full_df$fsize > 1] <- 'small'
+full_df$fsize_dis[full_df$fsize > 4] <- 'large'
+
+# Show family size by survival using a mosaic plot
+mosaicplot(table(full_df$Fsize_dis, full_df$Survived), 
+           main='Family Size by Survival', shade=TRUE)
+```  
+
+가족 크기가 1인 경우, 5보다 작은 경우, 5이상인 경우로 가족 크기를 소중대로 나누었다.  
+
+그리고 모자이크 그림으로 쉽게 확인할 수 있다.  
+
+* dtree3패키지를 쓰는게 더 좋아보인다.  
+
+### 2.3 Cabin(객실번호)  
+
+```{r}
+# This variable appears to have a lot of missing values
+full_df$Cabin[1:28]
+```  
+
+많은 결측값들이 존재하는 모습  
+
+```{r}
+strsplit(full_df$Cabin[2], NULL) # [[1]]
+
+# Create a Deck variable. Get passenger deck A - F:
+full_df$deck <- factor(map_chr(full_df$Cabin, ~strsplit(.x, NULL)[[1]][1]))
+
+
+full_df$deck %>% head
+```  
+
+C85를 한글자씩 분리해서 앞자리의 객실 등급만 가져오는게 좋아보인다.  
+
+솔직히 방번호와 그에 따른 위치를 알고, 침몰이 어느 방향으로 이루어져 어느 방과 가까운지를 알면 더 예측 정확도를 올릴 수 있겠지만, 사실상 그렇지 못하다.  
+
+테스트를 한 후에 모든 문자에 대해 적용시켰다.  
+원래 없던 것들은 그냥 <NA>로 나오고 있다. chr로 적용시켰기 때문에 <NA>문자형을 보인다.  
+
+## 3.1 Missingness  
+
+Now, we're ready to start exploring missing data and rectifying it through imputation. There are a number of different ways we could go about doing this. Given the small size of the dataset, we probably sould not opt for deleting either entire observations (rows) or variables (columns) containing missing values. We're left with the option of either replacing missing values with a sensible values given the distribution of the dat, e.g, the mean, median or mode. Finally, we could go with prediction. We'll use both of the two latter methods and i'll rely on some data visualization to guide our decisions.  
+
+
+### 3.2 Embarked(배에 탑승한 위치)  
+
+C : Cherbourg, Q : Queenstown, S : Southampton  
+
+```{r}
+full_df$Embarked %>% unique
+which(full_df$Embarked=="")
+
+full_df[full_df$Embarked=="",] 
+
+
+# Get rid of our missing passenger IDs
+embark_fare <- full_df %>%
+  filter(PassengerId != 62 & PassengerId != 830)
+```  
+
+Embarked의 비어있는 곳은 62번째와 830번째이다. 2개 정도는 비슷한 값을 추론하여 채워넣을 수 있을 것 같다.  
+
+빈 값을 제외한 데이터셋을 만들어 그래프로 유추해보기로 하자.  
+
+
+```{r}
+full_df[c(62,830),"Fare"]
+
+# Use ggplot2 to visualize embarkment, passenger class, & median fare
+ggplot(embark_fare, aes(x = Embarked, y = Fare, fill = factor(Pclass))) +
+  geom_boxplot() +
+  geom_hline(aes(yintercept=80), 
+    colour='red', linetype='dashed', lwd=2) +
+  scale_y_continuous(labels=dollar_format()) +
+  theme_few()
+```  
+Embarked가 ""인 값 2개의 Fare는 80이다. 여기서 80불에 대한 horizon line을 그었을 떄, Embarked가 C이고 1등석(Pclass가 1)인 median과 겹친다. 따라서 Full_df의 62와 830행 Embarked를 C로 유추하여 채워두기로 한다.  
+
+비슷한 요금을 지불했으므로 그 객실 등석이라고 생각한 것이다.  
+
+```{r}
+# Since their fare was $80 for 1st class, they most likely embarked from 'C'
+full_df$Embarked[c(62, 830)] <- 'C'
+```  
+
+
+
+### 3.3 Fare  
+
+```{r}
+# Show row 1044
+full_df[1044, ]
+```  
+
+탑승 위치가 S이며, 객실 등급은 3등급인 사람의 요금이 현재 결측치이다.  
+이것도 마찬가지로 유추하여 넣어보자.  
+
+
+```{r}
+ggplot(full_df[full_df$Pclass == '3' & full_df$Embarked == 'S',], 
+  aes(x = Fare)) +
+  
+  geom_density(fill = '#99d6ff', alpha=0.4) + 
+  geom_vline(aes(xintercept=median(Fare, na.rm=T)),
+    colour='red', linetype='dashed', lwd=1) +
+  scale_x_continuous(labels=dollar_format()) +
+  theme_few()
+```  
+
+3등급이며 S인 사람들에 대해서 요금에 대한 밀도함수 그래프이다.  
+우리는 이 결측치를 이 사람들의 median으로 채워넣기로 한다.  
+
+```{r}
+# Replace missing fare value with median fare for class/embarkment
+full_df$Fare[1044] <- median(full_df[full_df$Pclass == '3' & full_df$Embarked == 'S', ]$Fare, na.rm = TRUE)
+```  
+
+### 3.4 Age  
+
+```{r}
+# Show number of missing Age values
+sum(is.na(full_df$Age))
+```  
+
+나이의 결측값 갯수  
+
+```{r}
+# Make variables factors into factors
+factor_vars <- c('PassengerId','Pclass','Sex','Embarked',
+                 'title','surname','family','fsize')
+
+full_df[factor_vars] <- lapply(full_df[factor_vars], factor)
+
+
+# Set a random seed
+set.seed(129)
+
+# Perform mice imputation, excluding certain less-than-useful variables:
+mice_mod <- mice(full_df[, !names(full_df) %in%
+                    c('PassengerId','Name','Ticket','Cabin','Family',
+                      'Surname','Survived')], method='rf') 
+```  
+
+factor형태의 변수들은 factor로 바꾼다.  
+결측치를 채울 변수들에 대해서 random forest 알고리즘을 이용해 채운다.  
+
+
+```{r}
+# Save the complete output 
+mice_output <- complete(mice_mod)
+
+head(mice_output)
+
+map_dbl(mice_output,~sum(is.na(.x)))
+```  
+
+random forest방법을 이용해 결측값을 채워넣고, 결측값 갯수를 컬럼별로 확인하였다.  
+나이는 더 이상 결측값이 존재하지 않는다.  
+
+```{r}
+# Plot age distributions
+par(mfrow=c(1,2))
+
+hist(full_df$Age, freq=F, main='Age: Original Data', 
+  col='darkgreen', ylim=c(0,0.04))
+
+hist(mice_output$Age, freq=F, main='Age: MICE Output', 
+  col='lightgreen', ylim=c(0,0.04))
+```  
+
+결측치를 채우기 전, 후에 대한 히스토그램이다.  
+비슷한 양상으로 채워졌다.  
+
+```{r}
+# Replace Age variable from the mice model.
+full_df$Age <- mice_output$Age
+
+# Show new number of missing Age values
+sum(is.na(full_df$Age))
+```  
+
+
+
+```{r}
+# First we'll look at the relationship between age & survival
+ggplot(full_df[1:891,], aes(Age, fill = factor(Survived))) + 
+  geom_histogram() + 
+  # I include Sex since we know (a priori) it's a significant predictor
+  facet_grid(.~Sex) + 
+  theme_few()
+```  
+
+나이에 따른 생존 여부를 성별과 나타내었다.  
+
+```{r}
+# Create the column child, and indicate whether child or adult
+full_df$Child[full_df$Age < 18] <- 'Child'
+full_df$Child[full_df$Age >= 18] <- 'Adult'
+
+# Show counts
+table(full_df$Child, full_df$Survived)
+```  
+
+18세를 기준으로 이상이면 성인, 아니면 어린이라고 분류하였다.  
+생존여부와 성인여부에 대한 table을 확인할 수 있다.  
+
+어린이라고해서 반드시 생존하는 것은 아님을 알 수 있다.  
+Mother변수를 만드면서 feature engineering을 마무리하자  
+엄마가 타이타닉에서 살아남을 가능성이 더 높기를 바라는 소망이 담겨있다.  
+
+### 3.5 Mother  
+
+```{r}
+# Adding Mother variable
+full_df$Mother <- 'Not Mother'
+full_df$Mother[full_df$Sex == 'female' & full_df$Parch > 0 & full_df$Age > 18 & full_df$title != 'Miss'] <- 'Mother'
+
+# Show counts
+table(full_df$Mother, full_df$Survived)
+```  
+
+먼저 모든 값에 Not Mother을 대입하고, 조건에 맞는 값에 Mother을 넣으면 된다.  
+
+여성이면서 함께 탑승한 부모, 자식의 수가 0보다 크며(자식이 있어야 엄마임), 성인이면서 Miss가 아닌 사람들(결혼하면 Miss를 쓰지않음)은 엄마이다.  
+
+```{r}
+# Finish by factorizing our two new factor variables
+full_df$Child  <- factor(full_df$Child)
+full_df$Mother <- factor(full_df$Mother)
+```  
+
+factor형으로 바꿔준다.  
+
+### finishing feature engineering  
+
+All of the variables we care about should be taken care of and there should be no missing data. I'am going to double check just to be sure.  
+
+```{r}
+md.pattern(full_df)
+```
+
+
+## 4.1 Prediction  
+
+```{r}
+train_df <- full_df[1:891,]
+test_df <- full_df[892:1309,]
+```  
+
+full_df로 모든 작업을 마친 후, 다시 원래 있던 train set, test set으로 나누어 준다.  
+
+
+```{r}
+colnames(train_df)
+```  
+
+```{r}
+library(doSNOW)
+library(parallel)
+
+num_cores <- parallel:::detectCores()
+
+cl <- makeCluster(num_cores-1, type = "SOCK")
+registerDoSNOW(cl)
+```
+
+1개의 코어는 다른 일을 하도록 두고 나머지 코어들을 모형 연산에 집중시켰다.  
+
+
+### 4.2 random forest  
+
+
+```{r}
+var <-  c("Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", 
+          "Embarked", "title", "fsize", "Child", "Mother")
+
+set.seed(100)
+
+control <- trainControl(method="repeatedcv", 
+                        number = 10, 
+                        repeats = 3,
+                        index = createMultiFolds(train_df$Survived,
+                                                 k=5, 
+                                                 times = 3))
+customGrid <- expand.grid(mtry = 1:10)
+rf <- train(x = train_df[,var], y = train_df$Survived, 
+            method = "rf", 
+            importance=TRUE,
+            trControl = control,
+            tuneGrid = customGrid,
+            verbose = F,
+            preProcess = c("center", "scale"))
+
+rf$results
+rf$bestTune
+```  
+
+random forest를 활용한 repeat cross validation 방법을 이용해 모형을 구축  
+
+* 5 fold  
+* 3 repeat  
+*변수별 scaling을 진행  
+
+
+```{r}
+plot(rf)
+```
+
+```{r}
+varImp(rf, scale=FALSE)
+```  
+
+하위 3개를 제외하고 다시 모형을 적합  
+
+```{r}
+var <-  c("Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", 
+          "title", "fsize")
+
+
+set.seed(100)
+
+control <- trainControl(method="repeatedcv", 
+                        number = 10, 
+                        repeats = 3,
+                        index = createMultiFolds(train_df$Survived,
+                                                 k=5, 
+                                                 times = 3))
+customGrid <- expand.grid(mtry = 1:10)
+rf <- train(x = train_df[,var], y = train_df$Survived, 
+            method = "rf", 
+            importance=TRUE,
+            trControl = control,
+            tuneGrid = customGrid,
+            verbose = F,
+            preProcess = c("center", "scale"))
+
+rf$results
+rf$bestTune
+```  
+
+변수 중요도가 낮은 하위 3개를 제외하니 cv의 RMSE가 약간이나마 줄어들었다.  
+
+
+
+
+
+```{r}
+# Predict using the test set
+prediction <- predict(rf, test_df)
+
+prediction <- ifelse(prediction>0.5,1,0)
+```  
+
+```{r}
+result <- data.frame(PassengerId = test_df$PassengerId, Survived = prediction)
+
+result %>% head(10)
+```  
+
+
+
+```{r eval=FALSE}
+# Write the solution to file
+fwrite(result, file = 'rf_caret.csv', row.names = F)
+```  
+
+
+
+## Reference  
+
+### R  
+
+https://www.kaggle.com/mrisdal/exploring-survival-on-the-titanic  
+
+https://www.kaggle.com/headsortails/tidy-titarnic  
+
+
+<br>
+
+### Python  
+
+https://www.kaggle.com/startupsci/titanic-data-science-solutions  
+
+
+
+
+
+
+
+
+
+
