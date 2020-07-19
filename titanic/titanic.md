@@ -786,7 +786,7 @@ random forest를 활용한 repeat cross validation 방법을 이용해 모형을
 
   - 5 fold  
   - 3 repeat  
-    \*변수별 scaling을 진행
+  - 변수별 scaling을 진행
 
 <!-- end list -->
 
@@ -795,73 +795,6 @@ plot(rf)
 ```
 
 <img src="titanic_files/figure-gfm/unnamed-chunk-35-1.png" style="display: block; margin: auto;" />
-
-``` r
-varImp(rf, scale=FALSE)
-```
-
-    ## rf variable importance
-    ## 
-    ##          Overall
-    ## Pclass     34.32
-    ## Fare       31.66
-    ## Sex        30.42
-    ## title      28.34
-    ## fsize      20.23
-    ## SibSp      16.79
-    ## Age        14.82
-    ## Parch      12.53
-    ## Child      11.25
-    ## Embarked   10.09
-    ## Mother      6.75
-
-하위 3개를 제외하고 다시 모형을 적합
-
-``` r
-var <-  c("Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", 
-          "title", "fsize")
-
-
-set.seed(100)
-
-control <- trainControl(method="repeatedcv", 
-                        number = 10, 
-                        repeats = 3,
-                        index = createMultiFolds(train_df$Survived,
-                                                 k=5, 
-                                                 times = 3))
-customGrid <- expand.grid(mtry = 1:10)
-rf <- train(x = train_df[,var], y = train_df$Survived, 
-            method = "rf", 
-            importance=TRUE,
-            trControl = control,
-            tuneGrid = customGrid,
-            verbose = F,
-            preProcess = c("center", "scale"))
-
-rf$results
-```
-
-    ##    mtry      RMSE  Rsquared       MAE     RMSESD RsquaredSD       MAESD
-    ## 1     1 0.3656884 0.4546989 0.3018101 0.01037531 0.03227676 0.006212762
-    ## 2     2 0.3576529 0.4594567 0.2573483 0.01087161 0.03381095 0.006877478
-    ## 3     3 0.3613832 0.4488109 0.2503740 0.01099997 0.03642711 0.008912646
-    ## 4     4 0.3647030 0.4404235 0.2477831 0.01103632 0.03698273 0.010232422
-    ## 5     5 0.3678822 0.4327525 0.2461204 0.01085123 0.03598750 0.010692521
-    ## 6     6 0.3705578 0.4260406 0.2461103 0.01153034 0.03725326 0.011449429
-    ## 7     7 0.3720673 0.4224316 0.2458901 0.01178380 0.03668339 0.011073620
-    ## 8     8 0.3732218 0.4195255 0.2463575 0.01242793 0.03860303 0.011833730
-    ## 9     9 0.3735607 0.4187015 0.2463359 0.01208058 0.03856268 0.011845554
-    ## 10   10 0.3730759 0.4201899 0.2453790 0.01155790 0.03766305 0.011524653
-
-``` r
-rf$bestTune
-```
-
-    ##   mtry
-    ## 2    2
-
-변수 중요도가 낮은 하위 3개를 제외하니 cv의 RMSE가 약간이나마 줄어들었다.
 
 ``` r
 # Predict using the test set
@@ -881,7 +814,7 @@ result %>% head(10)
     ## 893         893        0
     ## 894         894        0
     ## 895         895        0
-    ## 896         896        0
+    ## 896         896        1
     ## 897         897        0
     ## 898         898        1
     ## 899         899        0

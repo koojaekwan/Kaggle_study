@@ -465,49 +465,12 @@ random forest를 활용한 repeat cross validation 방법을 이용해 모형을
 
 * 5 fold  
 * 3 repeat  
-*변수별 scaling을 진행  
+* 변수별 scaling을 진행  
 
 
 ```{r}
 plot(rf)
 ```
-
-```{r}
-varImp(rf, scale=FALSE)
-```  
-
-하위 3개를 제외하고 다시 모형을 적합  
-
-```{r}
-var <-  c("Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", 
-          "title", "fsize")
-
-
-set.seed(100)
-
-control <- trainControl(method="repeatedcv", 
-                        number = 10, 
-                        repeats = 3,
-                        index = createMultiFolds(train_df$Survived,
-                                                 k=5, 
-                                                 times = 3))
-customGrid <- expand.grid(mtry = 1:10)
-rf <- train(x = train_df[,var], y = train_df$Survived, 
-            method = "rf", 
-            importance=TRUE,
-            trControl = control,
-            tuneGrid = customGrid,
-            verbose = F,
-            preProcess = c("center", "scale"))
-
-rf$results
-rf$bestTune
-```  
-
-변수 중요도가 낮은 하위 3개를 제외하니 cv의 RMSE가 약간이나마 줄어들었다.  
-
-
-
 
 
 ```{r}
