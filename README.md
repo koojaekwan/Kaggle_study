@@ -1,5 +1,4 @@
-# Kaggle_study
-kaggle for data science  
+# Numpy and Pandas study
 
 
 If you fail to load this "ipynb" file in github, please try it!  
